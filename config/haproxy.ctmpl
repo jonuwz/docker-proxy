@@ -1,0 +1,40 @@
+{{$domain := env "DOMAIN"}}global
+    log 127.0.0.1   local0
+    log 127.0.0.1   local1 notice
+    debug
+    stats timeout 30s
+    maxconn {{with $maxconn:=key "service/haproxy/maxconn"}}{{$maxconn}}{{else}}4096{{end}}
+
+defaults
+    log global
+    option httplog
+    option dontlognull
+    mode http{{range ls "service/haproxy/timeouts"}}
+    timeout {{.Key}} {{.Value}}{{else}}
+    timeout connect 5000
+    timeout client  50000
+    timeout server  50000{{end}}
+
+frontend https-in 
+    bind *:443 ssl crt /etc/ssl/{{$domain}}.pem{{range $i,$a:=services}}{{if and ( .Tags | contains $domain ) ( .Tags | contains "http" )}}
+    use_backend srvs_http{{$i}} if { hdr(host) -i {{.Name}}.{{$domain}} }{{end}}{{end}}{{range $i,$a:=services}}{{if and ( .Tags | contains $domain ) ( .Tags | contains "https" )}}
+    use_backend srvs_https{{$i}} if { hdr(host) -i {{.Name}}.{{$domain}} }{{end}}{{end}}
+
+{{range $i,$a:=services}}{{if and ( .Tags | contains $domain ) ( .Tags | contains "http" )}} backend srvs_http{{$i}}
+    mode http
+    balance roundrobin
+    option forwardfor
+    option httpchk HEAD / HTTP/1.1\r\nHost:localhost{{range $c,$d:=service $a.Name}}
+    server host{{$c}} {{.Address}}:{{.Port}} check{{end}}{{end}}
+{{end}}
+
+{{range $i,$a:=services}}{{if and ( .Tags | contains $domain ) ( .Tags | contains "https" )}} backend srvs_https{{$i}}
+    mode http
+    balance roundrobin
+    option forwardfor
+    option http-server-close
+    option httpchk HEAD / HTTP/1.1\r\nHost:localhost{{range $c,$d:=service $a.Name}}
+    server host{{$c}} {{.Address}}:{{.Port}} check ssl verify none{{end}}{{end}}
+{{end}}
+
+
